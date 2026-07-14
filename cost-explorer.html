@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculateur de coûts — Projet</title>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen py-10">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Destructuring React hooks
+        const { useState, useMemo } = React;
+        
+        // Destructuring Recharts components from the global window object
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = Recharts;
+
+        const fmt = (n, decimals = 0) =>
+          n.toLocaleString('fr-BE', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+
+        function Field({ label, value, onChange, unit, step = 1, min = 0 }) {
+          return (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500">{label}</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={value}
+                  min={min}
+                  step={step}
+                  onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+                {unit && <span className="text-xs text-gray-400 whitespace-nowrap">{unit}</span>}
+              </div>
+            </div>
+          );
+        }
+
+        const GPU_OPTIONS = [
+          { key: 'l4-1', label: 'L4-1-24G (1x L4, 24 Go)', price: 0.7875, gpus: 1 },
+          { key: 'l4-2', label: 'L4-2-24G (2x L4, 48 Go)', price: 1.575, gpus: 2 },
+          { key: 'l4-4', label: 'L4-4-24G (4x L4, 96 Go)', price: 3.15, gpus: 4 },
+          { key: 'l4-8', label: 'L4-8-24G (8x L4, 192 Go)', price: 6.3, gpus: 8 },
+          { key: 'l40s-1', label: 'L40S-1-48G (1x L40S, 48 Go)', price: 1.46992, gpus: 1 },
+          { key: 'l40s-2', label: 'L40S-2-48G (2x L40S, 96 Go)', price: 2.93983, gpus: 2 },
+          { key: 'l40s-4', label: 'L40S-4-48G (4x L40S, 192 Go)', price: 5.87966, gpus: 4 },
+          { key: 'l40s-8', label: 'L40S-8-48G (8x L40S, 384 Go)', price: 11.75933, gpus: 8 },
+          { key: 'h100-1', label: 'H100-1-80G (1x H100, 80 Go)', price: 2.8665, gpus: 1 },
+          { key: 'render-s', label: 'RENDER-S (1x, 16 Go)', price: 1.221, gpus: 1 },
+        ];
+
+        function GpuSelect({ value, onChange }) {
+          const selected = GPU_OPTIONS.find((o) => o.key === value);
+          const normalizedPrice = selected ? selected.price / selected.gpus : 0;
+          return (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500">Instance GPU (Scaleway)</label>
+              <select
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {GPU_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label} — {o.price.toFixed(4)} €/h
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-gray-400">
+                Soit {normalizedPrice.toFixed(4)} €/h par GPU équivalent (utilisé pour le calcul)
+              </span>
+            </div>
+          );
+        }
+
+        const DB_NODE_OPTIONS = [
+          { key: 'dev-s', label: 'DB-DEV-S (2 vCPU, 2 Go, dev)', price: 0.0292, dedicated: false, sla: false },
+          { key: 'dev-m', label: 'DB-DEV-M (3 vCPU, 4 Go, dev)', price: 0.0565, dedicated: false, sla: false },
+          { key: 'dev-l', label: 'DB-DEV-L (4 vCPU, 8 Go, dev)', price: 0.1114, dedicated: false, sla: false },
+          { key: 'dev-xl', label: 'DB-DEV-XL (4 vCPU, 12 Go, dev)', price: 0.1661, dedicated: false, sla: false },
+          { key: 'play2-pico', label: 'DB-PLAY2-PICO (1 vCPU, 2 Go)', price: 0.0436, dedicated: false, sla: false },
+          { key: 'play2-nano', label: 'DB-PLAY2-NANO (2 vCPU, 4 Go)', price: 0.0808, dedicated: false, sla: false },
+          { key: 'pro2-xxs', label: 'DB-PRO2-XXS (2 vCPU, 8 Go)', price: 0.1683, dedicated: false, sla: false },
+          { key: 'pro2-xs', label: 'DB-PRO2-XS (4 vCPU, 16 Go)', price: 0.3366, dedicated: false, sla: false },
+          { key: 'pro2-s', label: 'DB-PRO2-S (8 vCPU, 32 Go)', price: 0.6701, dedicated: false, sla: false },
+          { key: 'pro2-m', label: 'DB-PRO2-M (16 vCPU, 64 Go)', price: 1.3403, dedicated: false, sla: false },
+          { key: 'pro2-l', label: 'DB-PRO2-L (32 vCPU, 128 Go)', price: 2.5092, dedicated: false, sla: false },
+          { key: 'gp-xs', label: 'DB-GP-XS (4 vCPU, 16 Go)', price: 0.2817, dedicated: false, sla: false },
+          { key: 'gp-s', label: 'DB-GP-S (8 vCPU, 32 Go)', price: 0.5616, dedicated: false, sla: false },
+          { key: 'gp-m', label: 'DB-GP-M (16 vCPU, 64 Go)', price: 1.1211, dedicated: false, sla: false },
+          { key: 'gp-l', label: 'DB-GP-L (32 vCPU, 128 Go)', price: 1.9169, dedicated: false, sla: false },
+          { key: 'pop2-2c8g', label: 'DB-POP2-2C-8G (2 vCPU, 8 Go, dédié, 99.95%)', price: 0.2194, dedicated: true, sla: true },
+          { key: 'pop2-4c16g', label: 'DB-POP2-4C-16G (4 vCPU, 16 Go, dédié, 99.95%)', price: 0.4385, dedicated: true, sla: true },
+          { key: 'pop2-8c32g', label: 'DB-POP2-8C-32G (8 vCPU, 32 Go, dédié, 99.95%)', price: 0.8753, dedicated: true, sla: true },
+          { key: 'pop2-16c64g', label: 'DB-POP2-16C-64G (16 vCPU, 64 Go, dédié, 99.95%)', price: 1.7467, dedicated: true, sla: true },
+          { key: 'pop2-32c128g', label: 'DB-POP2-32C-128G (32 vCPU, 128 Go, dédié, 99.95%)', price: 3.2785, dedicated: true, sla: true },
+        ];
+
+        const DB_STORAGE_RATES = [
+          { key: '5k', label: 'Block Storage 5K IOPS', price: 0.0993 },
+          { key: '15k', label: 'Block Storage 15K IOPS', price: 0.1489 },
+        ];
+
+        function DbSelect({ dbNodeKey, onNodeChange, dbStorageGb, onStorageGbChange, dbStorageRateKey, onStorageRateChange }) {
+          const node = DB_NODE_OPTIONS.find((o) => o.key === dbNodeKey) || DB_NODE_OPTIONS[0];
+          const rate = DB_STORAGE_RATES.find((r) => r.key === dbStorageRateKey) || DB_STORAGE_RATES[0];
+          const storageCost = dbStorageGb * rate.price;
+          const nodeMonthly = node.price * 730;
+          return (
+            <div className="flex flex-col gap-2 col-span-2">
+              <label className="text-xs text-gray-500">Base de données managée — node</label>
+              <select
+                value={dbNodeKey}
+                onChange={(e) => onNodeChange(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {DB_NODE_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label} — {o.price.toFixed(4)} €/h
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-gray-400">
+                Soit ~{nodeMonthly.toFixed(2)} €/mois (730h) {node.sla ? '— dédié, SLA 99.95%' : '— partagé, sans SLA'}
+              </span>
+              <label className="text-xs text-gray-500 mt-1">Stockage Block Storage de la DB</label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={dbStorageRateKey}
+                  onChange={(e) => onStorageRateChange(e.target.value)}
+                  className="rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  {DB_STORAGE_RATES.map((r) => (
+                    <option key={r.key} value={r.key}>{r.label} — {r.price} €/Go/mois</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  value={dbStorageGb}
+                  min={0}
+                  onChange={(e) => onStorageGbChange(parseFloat(e.target.value) || 0)}
+                  className="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+                <span className="text-xs text-gray-400 whitespace-nowrap">Go</span>
+              </div>
+              <span className="text-xs text-gray-400">Soit {storageCost.toFixed(2)} €/mois de stockage DB</span>
+            </div>
+          );
+        }
+
+        const STORAGE_CLASS_OPTIONS = [
+          { key: 'standard-multiaz', label: 'Standard Multi-AZ', price: 0.01606 },
+          { key: 'standard-onezone', label: 'Standard One Zone', price: 0.00803 },
+          { key: 'glacier', label: 'Glacier (archivage, restore 24-48h)', price: 0.00254 },
+        ];
+
+        function StorageSelect({ value, onChange }) {
+          const selected = STORAGE_CLASS_OPTIONS.find((o) => o.key === value) || STORAGE_CLASS_OPTIONS[0];
+          return (
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-gray-500">Classe de stockage vidéo (Object Storage)</label>
+              <select
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {STORAGE_CLASS_OPTIONS.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label} — €{o.price}/Go/mois (€{(o.price * 1024).toFixed(2)}/To/mois)
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-gray-400">
+                Soit €{(selected.price * 1024).toFixed(2)}/To/mois au tarif sélectionné
+              </span>
+            </div>
+          );
+        }
+
+        const PRESETS = [
+          {
+            key: 'poc',
+            label: 'PoC / Test',
+            description: 'Petite échelle, pour valider le pipeline',
+            values: {
+              users: 50,
+              videosPerUserDay: 10,
+              duplicationPct: 20,
+              videoSizeMb: 1,
+              gpuSecPerVideo: 18,
+              gpuKey: 'l4-1',
+              storageClassKey: 'standard-multiaz',
+              dbNodeKey: 'dev-s',
+              dbStorageGb: 5,
+              dbStorageRateKey: '5k',
+              fixedOther: 20,
+              months: 6,
+            },
+          },
+          {
+            key: 'pilote',
+            label: 'Pilote 500 utilisateurs',
+            description: 'Lancement réel, volume estimé prudent',
+            values: {
+              users: 500,
+              videosPerUserDay: 20,
+              duplicationPct: 30,
+              videoSizeMb: 1,
+              gpuSecPerVideo: 18,
+              gpuKey: 'l4-1',
+              storageClassKey: 'standard-multiaz',
+              dbNodeKey: 'pro2-xxs',
+              dbStorageGb: 20,
+              dbStorageRateKey: '5k',
+              fixedOther: 40,
+              months: 12,
+            },
+          },
+          {
+            key: 'prod',
+            label: 'Production optimisée',
+            description: 'Archivage Glacier + DB dédiée HA',
+            values: {
+              users: 500,
+              videosPerUserDay: 20,
+              duplicationPct: 40,
+              videoSizeMb: 1,
+              gpuSecPerVideo: 18,
+              gpuKey: 'l4-2',
+              storageClassKey: 'glacier',
+              dbNodeKey: 'pop2-2c8g',
+              dbStorageGb: 30,
+              dbStorageRateKey: '15k',
+              fixedOther: 60,
+              months: 12,
+            },
+          },
+          {
+            key: 'scale',
+            label: 'Scale 2000 utilisateurs',
+            description: 'Croissance, plus de GPU en parallèle',
+            values: {
+              users: 2000,
+              videosPerUserDay: 20,
+              duplicationPct: 40,
+              videoSizeMb: 1,
+              gpuSecPerVideo: 18,
+              gpuKey: 'l4-4',
+              storageClassKey: 'glacier',
+              dbNodeKey: 'pop2-4c16g',
+              dbStorageGb: 80,
+              dbStorageRateKey: '15k',
+              fixedOther: 80,
+              months: 24,
+            },
+          },
+        ];
+
+        function PresetBar({ onApply, activeKey }) {
+          return (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => onApply(p)}
+                  className={`text-left rounded-xl border p-3 transition-colors ${
+                    activeKey === p.key
+                      ? 'border-indigo-400 bg-indigo-50'
+                      : 'border-gray-200 bg-white hover:border-indigo-200'
+                  }`}
+                >
+                  <p className="text-sm font-medium text-gray-900">{p.label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{p.description}</p>
+                </button>
+              ))}
+            </div>
+          );
+        }
+
+        function StatCard({ label, value, sub, accent }) {
+          return (
+            <div className="rounded-xl bg-gray-50 p-4 flex flex-col gap-1">
+              <span className="text-xs text-gray-500">{label}</span>
+              <span className={`text-2xl font-semibold ${accent || 'text-gray-900'}`}>{value}</span>
+              {sub && <span className="text-xs text-gray-400">{sub}</span>}
+            </div>
+          );
+        }
+
+        function CostCalculator() {
+          const [users, setUsers] = useState(500);
+          const [videosPerUserDay, setVideosPerUserDay] = useState(20);
+          const [duplicationPct, setDuplicationPct] = useState(0);
+          const [videoSizeMb, setVideoSizeMb] = useState(1);
+          const [gpuSecPerVideo, setGpuSecPerVideo] = useState(15);
+          const [gpuKey, setGpuKey] = useState('l4-1');
+          
+          const gpuPricePerHour = useMemo(() => {
+            const opt = GPU_OPTIONS.find((o) => o.key === gpuKey);
+            return opt ? opt.price / opt.gpus : 0;
+          }, [gpuKey]);
+          
+          const [storageClassKey, setStorageClassKey] = useState('standard-multiaz');
+          
+          const storagePricePerGb = useMemo(() => {
+            const opt = STORAGE_CLASS_OPTIONS.find((o) => o.key === storageClassKey);
+            return opt ? opt.price : 0.01606;
+          }, [storageClassKey]);
+          
+          const [archiveAfterMonths, setArchiveAfterMonths] = useState(0); 
+          const archiveGlaciePrice = STORAGE_CLASS_OPTIONS.find((o) => o.key === 'glacier').price;
+          const [dbNodeKey, setDbNodeKey] = useState('pro2-xxs');
+          const [dbStorageGb, setDbStorageGb] = useState(20);
+          const [dbStorageRateKey, setDbStorageRateKey] = useState('5k');
+          
+          const dbCost = useMemo(() => {
+            const node = DB_NODE_OPTIONS.find((o) => o.key === dbNodeKey) || DB_NODE_OPTIONS[0];
+            const rate = DB_STORAGE_RATES.find((r) => r.key === dbStorageRateKey) || DB_STORAGE_RATES[0];
+            return node.price * 730 + dbStorageGb * rate.price;
+          }, [dbNodeKey, dbStorageGb, dbStorageRateKey]);
+          
+          const [fixedOther, setFixedOther] = useState(40);
+          const [months, setMonths] = useState(12);
+          const [activePreset, setActivePreset] = useState(null);
+
+          const applyPreset = (preset) => {
+            const v = preset.values;
+            setUsers(v.users);
+            setVideosPerUserDay(v.videosPerUserDay);
+            setDuplicationPct(v.duplicationPct);
+            setVideoSizeMb(v.videoSizeMb);
+            setGpuSecPerVideo(v.gpuSecPerVideo);
+            setGpuKey(v.gpuKey);
+            setStorageClassKey(v.storageClassKey);
+            setDbNodeKey(v.dbNodeKey);
+            setDbStorageGb(v.dbStorageGb);
+            setDbStorageRateKey(v.dbStorageRateKey);
+            setFixedOther(v.fixedOther);
+            setMonths(v.months);
+            setActivePreset(preset.key);
+          };
+
+          const results = useMemo(() => {
+            const dedupFactor = 1 - duplicationPct / 100;
+            const uniqueVideosPerDay = users * videosPerUserDay * dedupFactor;
+            const uniqueVideosPerMonth = uniqueVideosPerDay * 30;
+            const storageAddedPerMonthGb = (uniqueVideosPerMonth * videoSizeMb) / 1024;
+            const gpuHoursPerMonth = (uniqueVideosPerMonth * gpuSecPerVideo) / 3600;
+            const gpuCostPerMonth = gpuHoursPerMonth * gpuPricePerHour;
+            const fixedTotal = dbCost + fixedOther;
+
+            const gpuCostPerVideo = (gpuSecPerVideo / 3600) * gpuPricePerHour;
+            const storageCostPerVideoPerMonth = (videoSizeMb / 1024) * storagePricePerGb;
+            const costPerVideoOneOff = gpuCostPerVideo; 
+            const costPerVideoStoragePerMonth = storageCostPerVideoPerMonth; 
+
+            const timeline = [];
+            let cumulativeStorageGb = 0;
+            for (let m = 1; m <= months; m++) {
+              cumulativeStorageGb += storageAddedPerMonthGb;
+              const storageCost = cumulativeStorageGb * storagePricePerGb;
+              const totalCost = gpuCostPerMonth + storageCost + fixedTotal;
+              timeline.push({
+                month: `M${m}`,
+                storageTo: +(cumulativeStorageGb / 1024).toFixed(2),
+                storageCost: +storageCost.toFixed(0),
+                totalCost: +totalCost.toFixed(0),
+              });
+            }
+
+            return {
+              uniqueVideosPerDay,
+              uniqueVideosPerMonth,
+              storageAddedPerMonthGb,
+              gpuHoursPerMonth,
+              gpuCostPerMonth,
+              fixedTotal,
+              timeline,
+              costPerVideoOneOff,
+              costPerVideoStoragePerMonth,
+              month1Total: timeline[0]?.totalCost || 0,
+              lastMonthTotal: timeline[timeline.length - 1]?.totalCost || 0,
+              lastMonthStorageTo: timeline[timeline.length - 1]?.storageTo || 0,
+            };
+          }, [
+            users,
+            videosPerUserDay,
+            duplicationPct,
+            videoSizeMb,
+            gpuSecPerVideo,
+            gpuPricePerHour,
+            storagePricePerGb,
+            dbCost,
+            fixedOther,
+            months,
+          ]);
+
+          return (
+            <div className="max-w-4xl mx-auto p-6 bg-white shadow-xl rounded-2xl border border-gray-100">
+              <h1 className="text-2xl font-bold text-gray-900 mb-1">Calculateur de coûts — Projet</h1>
+              <p className="text-sm text-gray-500 mb-6">
+                Choisis une configuration ci-dessous, ou ajuste les champs détaillés plus bas.
+              </p>
+
+              <PresetBar onApply={applyPreset} activeKey={activePreset} />
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 bg-gray-50 rounded-xl border border-gray-200 p-5">
+                <Field label="Utilisateurs" value={users} onChange={setUsers} step={10} />
+                <Field label="Vidéos / utilisateur / jour" value={videosPerUserDay} onChange={setVideosPerUserDay} />
+                <Field label="Duplication entre utilisateurs" value={duplicationPct} onChange={setDuplicationPct} unit="%" min={0} />
+                <Field label="Taille moyenne par vidéo" value={videoSizeMb} onChange={setVideoSizeMb} unit="Mo" step={0.5} />
+                <Field label="Temps GPU cumulé / vidéo" value={gpuSecPerVideo} onChange={setGpuSecPerVideo} unit="sec" />
+                <GpuSelect value={gpuKey} onChange={setGpuKey} />
+                <StorageSelect value={storageClassKey} onChange={setStorageClassKey} />
+                <DbSelect
+                  dbNodeKey={dbNodeKey}
+                  onNodeChange={setDbNodeKey}
+                  dbStorageGb={dbStorageGb}
+                  onStorageGbChange={setDbStorageGb}
+                  dbStorageRateKey={dbStorageRateKey}
+                  onStorageRateChange={setDbStorageRateKey}
+                />
+                <Field label="Autres coûts fixes (Queues, Registry...)" value={fixedOther} onChange={setFixedOther} unit="€/mois" />
+              </div>
+
+              <div className="flex flex-col md:flex-row md:items-center gap-3 mb-6 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                <label className="text-xs text-gray-500 font-medium whitespace-nowrap">Horizon de projection</label>
+                <input
+                  type="range"
+                  min={1}
+                  max={24}
+                  value={months}
+                  onChange={(e) => setMonths(parseInt(e.target.value))}
+                  className="flex-1 accent-indigo-600"
+                />
+                <span className="text-sm font-semibold text-indigo-700 w-16 text-right">{months} mois</span>
+              </div>
+
+              <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-5 mb-6">
+                <p className="text-xs text-indigo-500 font-semibold mb-1">Coût unitaire — la brique de base</p>
+                <div className="flex items-baseline gap-6 flex-wrap">
+                  <div>
+                    <span className="text-3xl font-semibold text-indigo-700">
+                      {results.costPerVideoOneOff.toFixed(5)} €
+                    </span>
+                    <span className="text-xs text-indigo-400 ml-2">de traitement GPU, payé une fois / vidéo</span>
+                  </div>
+                  <div>
+                    <span className="text-xl font-semibold text-indigo-700">
+                      {results.costPerVideoStoragePerMonth.toFixed(6)} €
+                    </span>
+                    <span className="text-xs text-indigo-400 ml-2">de stockage, par mois tant que la vidéo reste stockée</span>
+                  </div>
+                </div>
+                <p className="text-xs text-indigo-400 mt-2">
+                  Le coût total plus bas n'est qu'une multiplication de ces deux nombres par le nombre de vidéos uniques à traiter.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+                <StatCard label="Vidéos uniques / jour" value={fmt(results.uniqueVideosPerDay)} />
+                <StatCard label="Heures GPU / mois" value={fmt(results.gpuHoursPerMonth)} sub={`~${fmt(results.gpuCostPerMonth)} €/mois`} />
+                <StatCard
+                  label={`Stockage cumulé (M${months})`}
+                  value={`${fmt(results.lastMonthStorageTo, 2)} To`}
+                />
+                <StatCard
+                  label="Coût total mois 1"
+                  value={`${fmt(results.month1Total)} €`}
+                  accent="text-indigo-600"
+                />
+                <StatCard
+                  label={`Coût total mois ${months}`}
+                  value={`${fmt(results.lastMonthTotal)} €`}
+                  sub={results.lastMonthTotal > results.month1Total ? 'Stockage cumulatif ↑' : ''}
+                  accent="text-indigo-600"
+                />
+              </div>
+
+              <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+                <p className="text-sm font-medium text-gray-700 mb-4">Évolution du coût mensuel total</p>
+                <div style={{ width: '100%', height: 260 }}>
+                  <ResponsiveContainer>
+                    <LineChart data={results.timeline} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <Tooltip
+                        formatter={(value, name) => [
+                          `${fmt(value)} €`,
+                          name === 'totalCost' ? 'Coût total' : 'Coût stockage',
+                        ]}
+                      />
+                      <Line type="monotone" dataKey="totalCost" stroke="#4f46e5" strokeWidth={2} dot={false} name="totalCost" />
+                      <Line type="monotone" dataKey="storageCost" stroke="#f59e0b" strokeWidth={2} dot={false} name="storageCost" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex gap-4 mt-4 text-xs text-gray-500">
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-indigo-600 inline-block" /> Coût total</span>
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" /> Coût stockage seul</span>
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-400 mt-4">
+                Hypothèses par défaut basées sur les échanges précédents (500 utilisateurs)
+              </p>
+            </div>
+          );
+        }
+
+        // Render the component into the browser's DOM
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<CostCalculator />);
+    </script>
+</body>
+</html>
